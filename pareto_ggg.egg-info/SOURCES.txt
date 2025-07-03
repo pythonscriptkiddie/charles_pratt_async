@@ -13,5 +13,5 @@ pareto_ggg.egg-info/SOURCES.txt
 pareto_ggg.egg-info/dependency_links.txt
 pareto_ggg.egg-info/requires.txt
 pareto_ggg.egg-info/top_level.txt
-pareto_ggg/tests/__init__.py
-pareto_ggg/tests/test_model.py
+tests/__init__.py
+tests/test_model.py
