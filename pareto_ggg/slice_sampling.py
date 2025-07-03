@@ -1,48 +1,27 @@
 # pareto_ggg/slice_sampling.py
-from typing import Tuple, Callable
 import numpy as np
 import scipy.stats
 from scipy.special import gammaln
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Tuple, List
 
-
-def slice_sample(log_fn: Callable, x0: float, width=1.0, steps_out=10, lower=-np.inf,
-                 upper=np.inf, max_iter=1000):
+def slice_sample(log_fn: Callable[[float], float], x0: float, width: float = 1.0, steps_out: int = 10,
+                 lower: float = -np.inf, upper: float = np.inf, max_iter: int = 1000) -> float:
     """
-    Perform univariate slice sampling from a log-probability function.
+    Perform univariate slice sampling.
 
-    Parameters
-    ----------
-    log_fn : callable
-        Function returning the log-probability at a given point.
+    Parameters:
+        log_fn: Callable returning the log-posterior at a given x
+        x0: Initial point
+        width: Initial bracket width
+        steps_out: How many times to expand the interval
+        lower: Minimum boundary for x
+        upper: Maximum boundary for x
+        max_iter: Maximum number of rejection attempts
 
-    x0 : float
-        Initial point to start the sampling.
-
-    width : float, default=1.0
-        Initial width of the sampling interval.
-
-    steps_out : int, default=10
-        Number of steps to expand the interval before sampling.
-
-    lower : float, default=-np.inf
-        Lower bound for the parameter.
-
-    upper : float, default=np.inf
-        Upper bound for the parameter.
-
-    max_iter : int, default=1000
-        Maximum number of iterations to sample a valid point.
-
-    Returns
-    -------
-    float
+    Returns:
         A sample from the target distribution.
-
-    Raises
-    ------
-    RuntimeError
-        If no acceptable sample is found within max_iter iterations.
     """
     x = x0
     log_y = log_fn(x) - np.random.exponential()
@@ -71,35 +50,22 @@ def slice_sample(log_fn: Callable, x0: float, width=1.0, steps_out=10, lower=-np
 
     raise RuntimeError("Slice sampling failed to converge")
 
-
-def slice_sample_gamma_parameters(x, cur_params, hyper, steps=20, w=1.0):
+def slice_sample_gamma_parameters(x: np.ndarray, cur_params: List[float], hyper: List[float],
+                                   steps: int = 20, w: float = 1.0) -> np.ndarray:
     """
-    Perform slice sampling to estimate shape and rate parameters of a Gamma distribution.
+    Perform slice sampling to estimate shape and rate parameters of a gamma distribution.
 
-    Parameters
-    ----------
-    x : array-like
-        Data points assumed to follow a Gamma distribution.
+    Parameters:
+        x: Observed data samples
+        cur_params: Initial [shape, rate] parameter guess
+        hyper: Hyperparameters for the shape and rate priors
+        steps: Number of slice samples
+        w: Step width
 
-    cur_params : array-like of shape (2,)
-        Current estimates for shape and rate parameters.
-
-    hyper : array-like of shape (4,)
-        Hyperparameters for the prior on shape and rate:
-        [shape_prior_alpha, shape_prior_beta, rate_prior_alpha, rate_prior_beta].
-
-    steps : int, default=20
-        Number of slice samples (1 per parameter per iteration).
-
-    w : float, default=1.0
-        Step size for slice sampling.
-
-    Returns
-    -------
-    np.ndarray
-        Updated estimates for shape and rate parameters.
+    Returns:
+        Updated [shape, rate] parameters.
     """
-    def log_posterior(log_params):
+    def log_posterior(log_params: np.ndarray) -> float:
         shape = np.exp(log_params[0])
         rate = np.exp(log_params[1])
         len_x = len(x)
@@ -115,7 +81,7 @@ def slice_sample_gamma_parameters(x, cur_params, hyper, steps=20, w=1.0):
 
     log_params = np.log(cur_params)
     for i in range(len(log_params)):
-        def lp_i(val):
+        def lp_i(val: float) -> float:
             temp = log_params.copy()
             temp[i] = val
             return log_posterior(temp)
@@ -123,25 +89,8 @@ def slice_sample_gamma_parameters(x, cur_params, hyper, steps=20, w=1.0):
 
     return np.exp(log_params)
 
-
-def _log_posterior_k(k, params):
-    """
-    Log-posterior for the shape parameter `k` in the Pareto/GGG model.
-
-    Parameters
-    ----------
-    k : float
-        Proposed value for the shape parameter.
-
-    params : tuple
-        Model components required for evaluation:
-        (x, tx, Tcal, litt, lambda_, tau, t, gamma)
-
-    Returns
-    -------
-    float
-        Log-posterior value for `k`.
-    """
+def _log_posterior_k(k: float, params: Tuple) -> float:
+    """Log-posterior for sampling k"""
     x, tx, Tcal, litt, lambda_, tau, t, gamma = params
     if k <= 0:
         return -np.inf
@@ -153,25 +102,8 @@ def _log_posterior_k(k, params):
         + logF
     )
 
-
-def _log_posterior_lambda(lambda_: float, params: Tuple):
-    """
-    Log-posterior for the rate parameter `lambda` in the Pareto/GGG model.
-
-    Parameters
-    ----------
-    lambda_ : float
-        Proposed value for the rate parameter.
-
-    params : tuple
-        Model components required for evaluation:
-        (x, tx, Tcal, k, tau, r, alpha)
-
-    Returns
-    -------
-    float
-        Log-posterior value for `lambda`.
-    """
+def _log_posterior_lambda(lambda_: float, params: Tuple) -> float:
+    """Log-posterior for sampling lambda"""
     x, tx, Tcal, k, tau, r, alpha = params
     if lambda_ <= 0:
         return -np.inf
@@ -180,53 +112,33 @@ def _log_posterior_lambda(lambda_: float, params: Tuple):
         (r - 1 + k * x) * np.log(lambda_) - lambda_ * (alpha + k * tx) + logF
     )
 
-
-def _log_posterior_tau(tau_rel, params):
-    """
-    Log-posterior for the latent dropout time `tau`.
-
-    Parameters
-    ----------
-    tau_rel : float
-        Time since last transaction (tau - tx).
-
-    params : tuple
-        Model components required for evaluation:
-        (k, lambda_, mu)
-
-    Returns
-    -------
-    float
-        Log-posterior value for `tau`.
-    """
+def _log_posterior_tau(tau_rel: float, params: Tuple) -> float:
+    """Log-posterior for sampling tau"""
     k, lambda_, mu = params
     if tau_rel <= 0:
         return -np.inf
     return -mu * tau_rel + np.log(np.clip(scipy.stats.gamma.cdf(tau_rel, a=k, scale=1 / (k * lambda_)), 1e-300, None))
 
-
-def pggg_slice_sample(what, x, tx, Tcal, litt, k, lambda_, mu, tau, t, gamma, r, alpha, s, beta):
+async def pggg_slice_sample_async(
+    what: str, x: np.ndarray, tx: np.ndarray, Tcal: np.ndarray, litt: np.ndarray,
+    k: np.ndarray, lambda_: np.ndarray, mu: np.ndarray, tau: np.ndarray,
+    t: float, gamma: float, r: float, alpha: float, s: float, beta: float
+) -> np.ndarray:
     """
-    Log-posterior for the latent dropout time `tau`.
+    Asynchronous slice sampler for Pareto/GGG parameters.
 
-    Parameters
-    ----------
-    tau_rel : float
-        Time since last transaction (tau - tx).
+    Parameters:
+        what: which parameter to sample ('k', 'lambda', 'tau')
+        x, tx, Tcal, litt, k, lambda_, mu, tau: vectors of data and params
+        t, gamma, r, alpha, s, beta: hyperparameters
 
-    params : tuple
-        Model components required for evaluation:
-        (k, lambda_, mu)
-
-    Returns
-    -------
-    float
-        Log-posterior value for `tau`.
+    Returns:
+        Array of updated samples for the target parameter.
     """
     N = len(x)
     out = np.empty(N)
 
-    def sample_one(i):
+    def sample_one(i: int) -> Tuple[int, float]:
         if what == "k":
             params = (x[i], tx[i], Tcal[i], litt[i], lambda_[i], tau[i], t, gamma)
             log_fn = lambda val: _log_posterior_k(val, params)
@@ -246,14 +158,30 @@ def pggg_slice_sample(what, x, tx, Tcal, litt, k, lambda_, mu, tau, t, gamma, r,
         else:
             raise ValueError("Invalid sampling target")
 
+    loop = asyncio.get_running_loop()
     with ThreadPoolExecutor() as executor:
-        results = list(executor.map(sample_one, range(N)))
+        futures = [loop.run_in_executor(executor, sample_one, i) for i in range(N)]
+        results = await asyncio.gather(*futures)
         for i, val in results:
             out[i] = val
 
     return out
 
+def pggg_slice_sample(*args, **kwargs) -> np.ndarray:
+    """
+    Synchronous wrapper for async pggg_slice_sample_async.
 
-def pggg_palive(x, tx, Tcal, k, lambda_, mu):
-    '''Placeholder so we do not have to call the palive function.'''
+    Returns:
+        Sampled parameter values (numpy array).
+    """
+    return asyncio.run(pggg_slice_sample_async(*args, **kwargs))
+
+def pggg_palive(x: np.ndarray, tx: np.ndarray, Tcal: np.ndarray,
+                k: np.ndarray, lambda_: np.ndarray, mu: np.ndarray) -> np.ndarray:
+    """
+    Placeholder for computing P(alive) for each customer.
+
+    Returns:
+        Array of probabilities.
+    """
     return np.ones_like(x) * 0.5  # Placeholder

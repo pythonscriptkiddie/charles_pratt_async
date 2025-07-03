@@ -3,50 +3,22 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Union
 
-
 def generate_data(n: int, T_cal: Union[int, float], T_star: Union[int, float],
                   params: Dict[str, float], seed: int = None) -> Dict[str, pd.DataFrame]:
     """
-    Simulate customer transaction data under the Pareto/GGG model.
+    Simulate customer-level transaction data under the Pareto/GGG model assumptions.
 
-    This function generates synthetic data for `n` customers using a
-    hierarchical Pareto/GGG model. It produces both:
-    - A customer-by-summary (CBS) table with aggregated statistics, and
-    - An event log (elog) of individual transactions.
+    Parameters:
+        n: Number of customers to simulate
+        T_cal: Calibration period length (can be scalar or array)
+        T_star: Holdout period length (scalar)
+        params: Dictionary with model parameters t, gamma, r, alpha, s, beta
+        seed: Optional random seed for reproducibility
 
-    Parameters
-    ----------
-    n : int
-        Number of customers to simulate.
-
-    T_cal : int or float
-        Length of the calibration period.
-
-    T_star : int or float
-        Length of the holdout period (not used directly, but affects total time window).
-
-    params : dict
-        Dictionary of global model parameters with keys:
-        - "t" : shape hyperparameter for k (interpurchase rate)
-        - "gamma" : rate hyperparameter for k
-        - "r" : shape hyperparameter for lambda (transaction rate)
-        - "alpha" : rate hyperparameter for lambda
-        - "s" : shape hyperparameter for mu (dropout rate)
-        - "beta" : rate hyperparameter for mu
-
-    seed : int, optional
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    dict of pd.DataFrame
-        Dictionary with two keys:
-        - "cbs" : DataFrame with one row per customer containing:
-            - "x": number of transactions in calibration period
-            - "t_x": time of last transaction in calibration period
-            - "T.cal": calibration window length
-            - "litt": log-interpurchase time for positive `x`
-        - "elog" : DataFrame with raw event log, columns: ["cust", "t"]
+    Returns:
+        Dictionary with two DataFrames:
+            - 'cbs': customer-by-summary table (x, t_x, T.cal, litt)
+            - 'elog': event log of all purchases (cust, t)
     """
     if seed is not None:
         np.random.seed(seed)
@@ -68,6 +40,7 @@ def generate_data(n: int, T_cal: Union[int, float], T_star: Union[int, float],
         elog.extend([(i, t) for t in ts if t <= T_cal[i] + T_star[i]])
 
     elog_df = pd.DataFrame(elog, columns=["cust", "t"])
+
     cbs = elog_df[elog_df.t <= T_cal.max()].groupby("cust").agg(
         x=("t", "count"),
         t_x=("t", "max")

@@ -4,7 +4,6 @@ import pandas as pd
 import time
 from pareto_ggg import utils, mcmc
 
-
 def main():
     """
     Main entry point for running a demonstration of the Pareto/GGG model.
@@ -12,6 +11,7 @@ def main():
     - Simulates synthetic customer transaction data.
     - Runs MCMC sampling to estimate model parameters.
     - Prints summary statistics of population-level and individual-level draws.
+    - Tracks and displays runtime for each major step.
     """
     total_start = time.perf_counter()
 
